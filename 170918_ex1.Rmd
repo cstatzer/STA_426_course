@@ -9,18 +9,32 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## Sample data
+## Sampling from a log-normal distribution
 
-Here, we sample 1000 points from the normal distribution
+In this experiment, we sample 100 values from a log-normal distribution. The distribution we choose here as a mean of 1 (µ = 1) and a standard deviation of 0.25 (σ = 0.25).
 
 ```{r sample}
-x <- rnorm(1000)
+sample <- rlnorm(100, meanlog = 1, sdlog = 0.25)
 ```
 
-## Generate Histogram
+## Sampling from log-normal distribution
+
+The sampled data is displayed as is in the histogram below. Sampling 100 observations from a log-normal distribution with a mean of 1 (µ = 1) and a standard deviation of 0.25 (σ = 0.25) yielded a new distribution. The distribution of the samples has a mean of µ = `r signif(mean(sample),digits=3)` and a standard deviation of σ = `r signif(sd(sample), digits=3)`.
 
 ```{r histogram}
-hist(x,200)
+hist(sample,10,main = "Sampling from a log-normal distribution", xlab = "value", ylab = "Number of observations")
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+## Sampling from log-normal distribution followed by log-transformation
+
+Sampling 100 observations from a log-normal distribution with a mean of 1 (µ = 1) and a standard deviation of 0.25 yielded a new distribution. The distribution of the samples after log-transformation has a mean of µ = `r signif(mean(log(sample)),digits=3)` and a standard deviation σ = `r signif(sd(log(sample)),digits=3)`.
+
+```{r log_histogram}
+hist(log(sample),10,main = "Sampling from a log-normal distribution (log scale)", xlab = "value", ylab = "Number of observations")
+```
+
+
+##Interpretation of results
+
+When log transformation was applied to the sampled data the observed distribution is very similar to parent distribution. This can be observed for the mean (parent distribution: $\sf{µ_{parent}}$ = 1.00, sampled: $\sf{µ_{sampled}}$ = `r signif(mean(log(sample)),digits=3)`) and the standard deviation (parent distribution: $\sf{σ_{parent}}$ = 0.25, sampled: $\sf{σ_{sampled}}$ = `r signif(sd(log(sample)),digits=3)`)
+
