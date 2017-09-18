@@ -1,0 +1,26 @@
+---
+title: "170918_ex1"
+author: "Cyril Statzer, ETH Zürich"
+date: "9/18/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Sample data
+
+Here, we sample 1000 points from the normal distribution
+
+```{r sample}
+x <- rnorm(1000)
+```
+
+## Generate Histogram
+
+```{r histogram}
+hist(x,200)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
