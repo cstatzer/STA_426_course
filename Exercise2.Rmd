@@ -1,0 +1,95 @@
+---
+title: "Exercise 2"
+author: "Hubert Rehrauer, modified by Cyril Statzer"
+date: "25 9 2017"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+## Exploratory Data Analysis
+
+Do an exploratory data analysis of a matrix of expression values. Load the data and display:
+
+```{r}
+#install.packages("limma")
+library(limma)
+#install.packages("pheatmap")
+library(pheatmap)
+```
+
+## Data Import
+```{r }
+anno = read.table("SampleAnnotation.txt", as.is=TRUE, sep="\t", quote="",
+                  row.names=1, header=TRUE)
+x = read.table("expressiondata.txt", as.is=TRUE, sep="\t", quote="", row.names=1, header=TRUE, check.names = FALSE)
+x = log2(as.matrix(x))
+```
+
+## Define samples and colors and phenotype
+```{r}
+samples = rownames(anno)
+colors = rainbow(nrow(anno))
+isNorm = anno$TissueType == "norm"
+isSick = anno$TissueType == "sick"
+isAcute = anno$TissueType == "acute"
+```
+
+Distribution analysis
+*boxplot*
+```{r boxplot}
+boxplot(x,use.cols=1)
+```
+
+*density*
+```{r densities}
+limma::plotDensities(x,main = "Densities",legend=F,col = terrain.colors(nrow(anno)))
+legend("topright",legend = colnames(x),cex = 0.7,col=terrain.colors(nrow(anno)),lty = 1, lwd = 4, y.intersp = 0.8)
+```
+
+Principle component analysis
+```{r}
+pca <- prcomp(x, center = T, scale. = T)
+plot(pca, main = "PCA")
+```
+
+```{r}
+#install.packages("ggbiplot")
+#library(ggbiplot)
+#g <- ggbiplot(pca)
+```
+
+Build correlation matrix from expression matrix (corr(x))
+Normalization is performed using the min-max methond
+```{r}
+corr <- cor(x)
+corr <- (corr - min(corr))/(max(corr) - min(corr))
+#corr <- normalizeQuantiles(corr)
+```
+
+
+Generate a heatmap to analyze clustering of samples
+Both the heatmap and pheatmap functions were used.
+The general clustering is very good, indicating a strong difference between normal and other samples (acute and disease). Within the acute and disease groups the clustering is very weak and they cannot be separated.
+```{r }
+heatmap(corr,main = "Correlation of disease states")
+pheatmap(corr,main = "Correlation of disease states")
+```
+
+Similarly to the heatmap here the clustering between patients is visualized in a separate dendrogram. The sick-14 sample is in the other cluster. All other acute and sick samples cluster within the same cluster.
+
+* clustering: *hclust*
+```{r}
+hc <- hclust(dist(corr))
+plot(hc)
+```
+
+
+
+
