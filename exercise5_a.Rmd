@@ -1,0 +1,198 @@
+---
+title: "Exercise for Lecture 5 - Differential expression with the limma package"
+output: html_document
+---
+
+The purpose of this exercise is to simulate some "microarray" data and explore how well different statistical tests separate truly differential expression (in a small sample situation).  This will introduce you to: i) simulation; ii) metrics to assess statistical performance; iii) some variations of the t-test.
+
+Specifically, we will create a synthetic dataset with replicates from 2 experimental conditions and put in differential expression for some features. The goal is to see how well different statistical summaries can distinguish between those "truly" differential and those not differential.
+
+Below is some R code to get you started.
+
+Previous path file:
+> .libPaths()
+[1] "C:/ProgramData/App-V/3B93D255-7D91-49DC-B5B0-49E0FACC68F4/58E809DE-7D4D-4F74-BA81-34C5267AAD64/Root/VFS/ProgramFilesX64/R_x64_3.x/library"
+
+
+```{r}
+.libPaths("C:/Users/statzerc/Desktop/%HOMESHARE%/R3UserLibs") #set the library
+library("limma")
+#source("https://bioconductor.org/biocLite.R")
+#biocLite("limma")
+```
+
+
+#### Simulation of Microarray datasets:
+
+Here we simulated a microarray experiment: a control in triplicate and an experimental condition in triplicate. In our simlation we set the first 1'000 gene set probes to be differentially expressed by adding a 'true LogFC' of 2 to the simulated normally distributed data.
+
+```{r}
+nGenes <- 10000                   # number of "features"
+nSamples <- 6                     # number of samples (split equal in 2 groups)
+pDiff <- .1                       # percent of genes "differential 
+grp <- rep(0:1,each=nSamples/2)   # dummy variable for exp. group
+trueFC <- 2                       # log-fold-change of truly DE
+
+d0 <- 1
+s0 <- 0.8
+sd <- s0*sqrt(d0/rchisq(nGenes,df=d0))  # dist'n of s.d.
+```
+
+Note: there are some details regarding the scaled inverse chi-square distribution that you may want to explore.  For example, see the [wiki description](http://en.wikipedia.org/wiki/Scaled_inverse_chi-square_distribution). 
+
+From this source:
+This family of scaled inverse chi-squared distributions is closely related to two other distribution families, those of the inverse-chi-squared distribution and the inverse gamma distribution. Compared to the inverse-chi-squared distribution, the scaled distribution has an extra parameter ??2, which scales the distribution horizontally and vertically, representing the inverse-variance of the original underlying process.
+
+#### Question 1. Look at the distribution of "true" s.d. (each gene has a different s.d.).  You will change this distribution later to see effect on differential detection performance.
+
+Next, we can generate a table of (null) data:
+
+```{r}
+y <- matrix(rnorm(nGenes*nSamples,sd=sd),
+            nr=nGenes,nc=nSamples)
+```
+
+And, we can add in "differential expression", randomly chosen to be in the positive or negative direction, to a set of indices chosen:
+
+```{r}
+indD <- 1:floor(pDiff*nGenes)
+diff <- sample(c(-1,1),max(indD),replace=TRUE)*trueFC
+y[indD,grp==1] <- y[indD,grp==1] + diff
+```
+
+```{r}
+plot(sd, log="y",main="Distribution of s.d. values",ylab="s.d. [log scale]")
+```
+
+#### Question 2. To make sure you understand the simulation, look at some of the rows in the table.  For example, plot the data (e.g., a barplot) for a few rows that are truly differential and a few rows that are non-differential.
+
+#####Rows of the simulated table
+
+```{r}
+#True fold change:
+TrueRows = sample(1:1000,9,replace = FALSE)  
+colnames(y) <- rep(c("ctr","exp"), each = nSamples/2 )
+par(mfrow=c(3,3),oma=c(0,0,2,0))
+for(rows in TrueRows){
+  barplot(y[rows,],names.arg = colnames(y),col = rep(c("grey","red2"),each=3))
+}
+title("True fold change is simulated (red pillars)",outer = TRUE)
+```
+9 rows of the simulated data are randomly picked out of the first 1000 rows - the part of the table which corresponds to the true logFC data.
+
+
+
+```{r}
+#No fold change added to random values:
+FalseRows = sample(1001:nrow(y),9,replace = FALSE)  
+colnames(y) <- rep(c("ctr","exp"), each = nSamples/2 )
+par(mfrow=c(3,3),oma=c(0,0,2,0))
+for(rows in FalseRows){
+  barplot(y[rows,],names.arg = colnames(y),col = rep(c("grey","black"),each=3))
+}
+title("No fold change is added to the simulated",outer = TRUE)
+```
+9 rows of the simulated data are randomly picked out of the last 9000 rows - the part of the table which does not contain a "true" logFC difference.
+
+
+#####Design matrix
+Next, we create a design matrix to feed into limma:
+
+```{r}
+#install.packages("rafalib")
+library(rafalib)
+design <- model.matrix(~grp)
+imagemat(design)
+```
+
+#### Question 3. What is the interpretation of the two columns of this design matrix?
+From a Previous edX tutorial I used the imagemat function of the rafalib package. Even though this is rather excessive for this example the function is a handy way to visualize a complex design matrix.
+To answer Question 3:
+The two columns in the design matrix represent the two groups (control and experiment). The design matrix splits the data of 6 observations (number of rows of the design table) into two groups (number of columns of the design table).
+
+
+Below is a standard limma pipeline.  We will unravel many details of these steps in the coming weeks.
+
+```{r}
+fit <- lmFit(y,design)
+fit <- eBayes(fit)
+```
+
+#### Question 4. For each row in the simulated table, calculate the classical 2-sample t-test (perhaps store the result in a vector named 'classicalt'; see below).  See ?t.test for more details about the built-in R function to do this calculation and convince yourself which arguments to use to match the t-test described in class.
+
+```{r}
+classicalt <- apply(y[,],1,function(mat) {t.test(x = mat[1:3], y = mat[4:6])$statistic}) #Use $p.value to only get p-values
+```
+
+
+Below, a vector of colours is made to signify the true differential "status", which will be used in exploratory plots:
+
+```{r}
+cols <- rep("black",nrow(y))
+cols[indD] <- "blue"   
+```
+
+
+#### Question 5. Add an exploratory visualization to your plots above, perhaps with a command similar to below.  From this visualization, summarize any differences you see between the three statistical summaries of a change between experimental groups.
+
+```{r}
+#I got stuck trying to extract the moderated p-values and mean differences from the fit.
+par(mfrow = c(3,1))
+plot( classicalt, col=cols, ylim=c(-10,10), pch=".", main="Classical-t" )
+plot( fit$t[,2], col=cols, ylim=c(-10,10), pch=".", main="moderated p-value (see Question #7)" )
+plot( fit$coefficients[,2], col=cols, ylim=c(-10,10), pch=".", main="mean differences (see Question #7)")
+
+```
+Remark: the distribution of the mean differences appear to be bimodal while the moderated p-values and the classical-t are unimodal. Since we add logFC of +/-2 in the first 1000 samples in the dataset we expect the distribution of the means to be bimodal.
+
+#### Question 6. Pick a reasonable metric to compare the methods: ROC curve, false discovery plot, power versus achieved FDR.  Using this metric/curve, compare the classical t-test (classicalt), the moderated t-test (fit\$t) and the log-fold-change or mean difference (fit\$coef).  Either manually calculate and plot it or use a nice package for it (e.g., [https://rocr.bioinf.mpi-sb.mpg.de/](the ROCR package) or [https://github.com/markrobinsonuzh/benchmarkR](benchmarkR package))  What method(s) perform well?
+#Get from github
+
+```{r}
+# source("https://bioconductor.org/biocLite.R")
+# biocLite("BiocStyle")
+# install.packages("devtools")
+library(devtools)
+devtools::install_github("markrobinsonuzh/benchmarkR")
+```
+
+```{r}
+library(benchmarkR)
+pvals_tstat <- apply(y[,],1,function(mat) {t.test(x = mat[1:3], y = mat[4:6])$p.value}) #Use $p.value to only get p-values
+label = c(rep(1,1000),rep(0,9000))
+re <- SimResults(pval = pvals_tstat, labels = label, padj = NULL, padjMethod = c("hommel"))
+benchmarkR(re)
+```
+
+```{r}
+library(benchmarkR)
+#Obtain the p.values of the different methods
+tstat <- apply(y[,],1,function(mat) {t.test(x = mat[1:3], y = mat[4:6])$p.value})
+pval_moderated <- fit$t[,2]
+pval_log_FC <- fit$coefficients[,2]
+methods = list(A=tstat, B=pval_moderated, C=pval_log_FC)
+
+#Generate label
+label = c(rep(1,1000),rep(0,9000))
+
+meth = cbind(tstat = tstat, moderated = pval_moderated, pval_log_FC = pval_log_FC)
+object = list(pval = meth, labels = label)
+compare <- SimResults(pval = object$pval, labels = object$labels, padj = NULL)
+benchmarkR(compare)
+```
+
+#### Question 7.  Explore the performance of these test statistics for a few scenarios.  For example, change the sample size, the number of genes DE, magnitude of the difference, level of variability.  What influence do these parameters have on the relative performance? 
+I changed the specified parameters and ran the comparitive analysis. However I don't think the data is relevant because I could not correctly extract the moderated p-values and the mean differences properly (see benchmarkR plot).
+
+#### Note: Submit both an Rmarkdown/markdown file as well as a compiled HTML file to your private github repository.
+Submitted
+
+
+
+
+
+
+
+
+
+
