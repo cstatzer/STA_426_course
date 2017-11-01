@@ -1,0 +1,138 @@
+---
+title: "Exercise 4"
+author: "Hubert Rehrauer"
+date: "8 10 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Mapping in practice
+
+#Mappers
+The following mappers were compared: 
+
+* bowtie2  
+* tophat2  
+* STAR  
+
+#Score alignments:
+How do the listed mappers score alignments? An alignment score describes how similar a read sequence is to the reference sequence that it is aligned to. The higher the score, the more similar they are. However, this similarity can be quantified in very different manners (bonuses and penalties) and thus differs between aligners.
+
+* __Star:__
+User-defined scores (penalties) are used for matches, mismatches, insertions, deletions and splice junction gaps. A local alignment scoring scheme is used to guide the stitching process. Using this process the alignment qualities and ranks can be determined. The stitched combination with the highest score is chosen as the best alignment of a read. In the case of reads that map to several locations, all alignments with scores within a certain user-defined range below the highest score are reported.
+Adapted from: Dobin, Alexander, et al. "STAR: ultrafast universal RNA-seq aligner." Bioinformatics 29.1 (2013): 15-21.
+
+* __Tophat2:__
+By default TopHat reports best or primary alignments based on alignment scores. This behavior can be changed by using the command --report-secondary-alignments. In doing so also the 20 best secondary alignments are reported. In turn this number can also be modified by passing the option: -g/--max-multihits <int>. The integer that is passed to this option determines how many alignments to the reference are allowed. If more alignments were found only the specified number of the ones with the highest alignment score are selected. If many alignments have the same score Tophat2 chooses randomly which ones are reported.
+Adapted from: [link] (https://ccb.jhu.edu/software/tophat/manual.shtml)
+
+* __Bowtie2:__
+In Bowtie 2 all alignments lie along a continuous spectrum of alignment scores. A scoring scheme is used that is similar to Needleman-Wunsch and Smith-Waterman. Adapted from: [link] (http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml)
+
+    + _Comment_: Bowtie 1 and Bowtie 2 are completely different aligners and cannot be used interchangably. Bowtie 2     supports gapped alignment, local alignment (which means that the read does not have to map end to end), unlimited   read length and in terms of scoring reports a spectrum and not 0 or high as Bowtie 1 does.
+  Adapted from: [link] (http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml)
+
+    + __Example of scoring process for the case of Bowtie2:__
+A mismatched base at a high-quality position in the read receives a penalty of -6 by default. A length-2 read gap receives a penalty of -11 by default (-5 for the gap open, -3 for the first extension, -3 for the second extension). Thus, in end-to-end alignment mode, if the read is 50 bp long and it matches the reference exactly except for one mismatch at a high-quality position and one length-2 read gap, then the overall score is -(6 + 11) = -17. The best possible alignment score in end-to-end mode is 0, which happens when there are no differences between the read and the reference.
+Example taken directly from [link] (http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml)
+
+
+#Reporting options
+It is crucial to be aware of the reporting strategy of the mapper one uses in an experiment. One problem that can occur otherwise is the misconception of unique alignments. The default behavior of many mappers is to only report the best alignment or to randomly select among equal alignments if there is a tie. If one is not aware of the reporting strategy of the aligner that is used this skews the analysis and makes comparisons between mappers difficult. The following reporting options are available for the different mappers:
+
+* __Tophat2:__
+Tophat2's default behavior is to only report the alignment with the best alignment score. In the case, where there is a tie between several alignments Tophat2 will randomly select one of these alignments and report them. To change this default behavior one can pass the argument --report-secondary-alignments.
+If this option is used the mapper will return as many alignments as specified in this option. Here again, if there is a tie between several alignments Tophat2 will randomly select as many as needed to reach the number that was specified in the --report-secondary-alignments option.
+[link] (https://ccb.jhu.edu/software/tophat/manual.shtml)
+
+
+* __Bowtie2:__
+Bowtie2 has a similar behavior as Tophat2. Both mappers report only the best alignment by default. In the case where there is a tie a 'best' alignment will be selected randomly.
+[link] (http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml)
+
+
+* __Star:__
+The Star mapper treats sequences that map to more than one region in the following way:
+all alignments with the exception of one sequence are labelled with 0x100 in the FLAG, which is the second column of the generated SAM file. The alignment with the highest score does not receive a label. If there is a tie between multiple alignments with highest scores one is selected randomly. This default behavior can be changed using the option --outSAMprimaryFlag AllBestScore.
+With this option does is basically taking the 0x100 bit FLAG away and reporting all alignments.
+Another option that is useful is --outFilterMultimapNmax. The integer value that is passed to this option specifies how many times a read is allowed to map to the genome. If is found to map more often than the value specified here it is not reported. The default value is 10.
+[link] (http://labshare.cshl.edu/shares/gingeraslab/www-data/dobin/STAR/STAR.posix/doc/STARmanual.pdf)
+
+
+
+
+## Mapping with R
+
+Using the Rsubread package to map a read file found at http://fgcz-gstore.uzh.ch/public/Yeast_Reads/.
+
+
+```{r, eval=FALSE}
+#source("https://bioconductor.org/biocLite.R")
+#biocLite("Rsubread")
+#biocLite("BSgenome.Scerevisiae.UCSC.sacCer3")
+#biocLite("TxDb.Scerevisiae.UCSC.sacCer3.sgdGene")
+```
+
+
+
+```{r,echo=FALSE}
+#dir.create("Yeast_example")
+setwd("Yeast_example")
+library("BSgenome.Scerevisiae.UCSC.sacCer3")
+library("Rsubread")
+```
+
+#Import
+I downloaded the file "20170313.A-G1_R1-sub.fastq" from the http://fgcz-gstore.uzh.ch/public/Yeast_Reads/ website, unzipped it and placed the file in the Yest_example directory
+
+#Export genome as fasta file
+export methods taken from the BSgenome library.
+```{r}
+genome <- BSgenome.Scerevisiae.UCSC.sacCer3 #load the genome specified in the library (same name)
+export(genome, "genome.fasta") #Export the entire genome as a fasta file
+```
+
+#Build index
+An index needs to be built before read mapping can be performed. This function creates a hash table for the reference genome, which can then be used by Subread aligners for read alignment (from Rsubread documentation).
+```{r}
+buildindex("Scerevisiae","genome.fasta",gappedIndex=TRUE,indexSplit=TRUE,memory=2000,TH_subread=100,colorspace=FALSE)
+#First the basename for the output files is passed to the function, then the name of the index file then the maximum memory usage of 2000 MB.
+```
+
+```{r}
+align("Scerevisiae","20170313.A-G1_R1-sub.fastq",type="rna",input_format="FASTQ",output_format="BAM",
+output_file=paste("20170313.A-G1_R1-sub","untrimmed",sep="."),nthreads=4)
+#number of threads is specified as 4 in the argument in nthreads.
+#FYI the align function is not the only Rsubread function for Read Mapping.
+```
+The mapping rate for the untrimmed reads is: __19'328 reads/sec__  (2,667,280 reads / 2.3 minutes )
+
+
+```{r}
+align("Scerevisiae","20170313.A-G1_R1-sub.fastq",type="rna",input_format="FASTQ",output_format="BAM",
+output_file=paste("20170313.A-G1_R1-sub","trimmed",sep="."),nthreads=4,nTrim5=5,nTrim3=5)
+#number of threads is specified as 4 in the argument in nthreads.
+#FYI the align function is not the only Rsubread function for Read Mapping.
+```
+
+The mapping rate for the trimmed reads (5 bases removed on both 5' and 3' ends) is: __18523 reads/sec__  (2,667,280 reads in 2.4 minutes).
+
+#Consequences of trimming reads
+
+#Mapping speed
+Trimming 5 bases of both ends of each read has slowed the mapping speed down. For untrimmed reads a mapping speed of 19'328 reads/sec was achieved while for trimmed reads the speed was 18523 reads/sec. The relative change is a decrease of 4.2% if five bases are trimmed from both ends of each read.
+
+#Mapping rate
+For untrimmed reads an alignment score of 72.5% was achieved and for trimmed reads a score of 74.4%. 
+
+#Potential explanations
+A hypothesis to explain the observed difference in mapping speed is that shorter reads potentially map to more locations in the genome and thus slow the mapping speed down. This explanation could then also rationalize why the trimmed reads reached a higher overall alignment score. This because reads which didn't map before were shortened and thus potentially more likely to be mapped. A very large factor for the alignment score is also the quality of the reads which were likely enhanced in the trimming process, since the first reads often have significantly reduced PHRED scores compared to the rest of the sequence.
+
+
+
+
+
