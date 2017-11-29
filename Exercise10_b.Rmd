@@ -1,0 +1,274 @@
+---
+title: "Exercise 10: Adjusting for a batch/technical effect + differential exon usage"
+output: html_document
+---
+
+
+In the first part of this exercise, we will revisit the analysis from Exercise 8 (pasilla dataset), to account for a covariate.  In the second part, we will use (preprocessed) exon-level counts to look for changes in splicing.
+```{r}
+library(limma)
+#lib.loc = "C:\\Users\\statzerc\\Desktop\\%HOMESHARE%\\R3UserLibs"
+# source("https://bioconductor.org/biocLite.R")
+# biocLite("edgeR",destdir = "C:\\Users\\statzerc\\Desktop\\%HOMESHARE%\\R3UserLibs")
+library(edgeR)
+```
+
+
+```{r}
+samples <- read.table("samples.txt", header=TRUE,
+                      row.names=5, stringsAsFactors=FALSE)
+samples
+```
+
+#### Exercise 1. Take the data from Exercise 8 and produce an MDS plot again, but this time colour the points according to the covariate in the samples table: libtype (SE = single end, PE = paired end); perhaps also label the points on the MDS plot using the 'shortname' column to make them easy to distinguish.  Comment on the organization of the samples.
+
+Making a more informative MDS plot.
+```{r}
+head(samples)
+par(oma=c(2,0,0,0))
+counts <- readDGE(samples$countfile)$counts
+plotMDS(counts,labels = samples$shortname,col = as.numeric(as.factor(samples$libtype)))
+title(main = "MDS plot")
+legend("topleft",c("Paired-end","Single-end"),col = c(1,2),pch = 15)
+mtext("Sample organisation: The samples show  clustering pattern that appears \n to be driven by the libtype covariate and not by the biological condition of the sample",side = 1, line = 1,outer = TRUE)
+```
+
+```{r}
+par(mfrow = c(1,2),oma = c(0,0,2,0))
+
+PE <- subset(samples,libtype == "PE")
+PE.counts <- readDGE(PE$countfile)$counts
+plotMDS(PE.counts,labels = PE$shortname,col = as.numeric(as.factor(PE$condition)),main = "Paired-end")
+
+SE <- subset(samples,libtype == "SE")
+SE.counts <- readDGE(SE$countfile)$counts
+plotMDS(SE.counts,labels = SE$shortname,col = as.numeric(as.factor(SE$condition)),main ="Single-end")
+mtext("Separated according to libtype", outer = TRUE, cex = 1.5)
+```
+
+
+####Organisation of the samples & interpretatin of MDS plots in general:
+
+* __MDS plot structure:__
+An MDS plot shows similarities and dissimilarities between samples (available in the limma package). This is done in an unsupervised manner. Using an MDS plot one can already estimate the extent to which samples will show differential expression between each other based on their clustering pattern in the plot.
+The first dimension represents the leading fold change best separating the individual samples. The first dimension is able to explain the variation in the data the best and the other dimensions have a smaller effect. Importantly, the other dimensions are orthogonal to the previous dimensions and are thus adding more value to the overall separation.
+
+* __What the MDS plot would ideally show:__
+In an ideal world the samples would cluster acording to their primary condition (e.g. treated and untreated) and all other conditions (repetitions, technical covariates usw) would lead to very small changes, if at all.
+
+* __Lessons learnt from the MDS plot:__
+Are the samples clustering acording to the condition of interest? If not, like in our case with the library type (PE, SE) this has to be investigated. The MDS plot is not limited to the first and second dimension and one can investigate any other dimension pair using dim=c(3,4) in the plotMDS() function.
+
+
+This summary is partially based on the paper I found: 
+**Law, Charity W., et al. "RNA-seq analysis is easy as 1-2-3 with limma, Glimma and edgeR, 2016**
+
+
+
+
+#### Exercise 2. Put a factor variable for the 'libtype' covariate in the design matrix and redo the edgeR or limma analysis from Exercise 8 (i.e., include also the biological factor, knockout state, in the design matrix).  Compare the set of genes called DE from last week's exercise (i.e., without accounting for the covariate) to this new analysis.  Identify and plot (normalized) expression levels of a gene that is affected solely by library type.
+
+###Strategy
+1. Generate a design matrix (with an intercept)
+  + based on the study design and the covariates I want to analyze
+  + package independent, use base R to define factor vectors
+  + use model.matrix {stats} to define the design matrix
+  + define easily legible column names in the design matrix (used for contrasts)
+  
+2. Generate a contrast matrix (limma package dependent)
+  + Here I defined a contrast matrix and used single columns from the design matrix
+  + Theoretically, no contrast matrix would be needed in this case but it offers more flexibility to include other contrasts in the future.
+  
+3. voom (voom)
+  + Voom is used here to transform RNAseq data for linear modelling (e.g. with limma)
+    + count data -> log2-CPM
+    + estimate the mean-variance relationship, raw counts show increasing variance with increasing count size (mean and variance are not independent, see voom plot)
+    + compute appropriate observation-level weights (to )
+    + these weights are then used by limma to adjust fo heteroscedasticity
+    
+4. Fitting a linear model to each gene / row-wise (limma)
+  + lmFit: generate a linear model (limma)
+  + contrasts.fit: compute coefficients for specified contrasts using the fitted linear model as input (limma)
+  + eBayes: taking the fitted linear model as input compute: (limma)
+    + moderated t-statistics
+    + moderated F-statistic
+    + log-odds of DE by empirical Bayes moderation of the standard errors
+    
+5. Interpreting DE genes
+  + decideTests: calculate which genes are differentially expressed under the different contrasts (limma)
+
+
+```{r}
+group <- factor(c(1,1,1,0,0,0,0)) # Has to match the counts table (3 exp, 4 ctrs) -> 1 is treated
+SE <- factor(c(1,0,0,1,1,0,0))
+PE <- factor(c(0,1,1,0,0,1,1))
+lib <- factor(c(1,0,0,1,1,0,0))
+x <- DGEList(counts=counts,group=group)
+y <- calcNormFactors(x)
+boxplot(y$counts,outline=FALSE,main = "Count distribution, before normalization")
+```
+
+
+
+```{r}
+design <- model.matrix(~group +lib) 
+colnames(design) <- c("int","treated","libtype") 
+design
+is.fullrank(design)
+
+contr.matrix <- makeContrasts(
+  treated = treated,
+  libtype = libtype,
+  #treated_vs_libtype = treated - libtype, #A placeholder for other informative contrasts
+  levels = colnames(design))
+
+contr.matrix
+```
+###Voom
+"It has been shown that for RNA-seq count data, the variance is not independent of the mean13 - this is true of raw
+counts or when transformed to log-CPM values. Methods that model counts using a Negative Binomial distribution
+assume a quadratic mean-variance relationship.
+
+When operating on a DGEList-object, voom converts raw counts to log-CPM values by automatically extracting
+library sizes and normalisation factors from x itself. Additional normalisation to log-CPM values can be specified
+within voom using the normalize.method argument." *Law, 2016*
+
+```{r}
+par(mfrow = c(1,2),oma = c(0,0,2,0))
+v <- voom(counts, design=design, plot = TRUE)
+vfit <- lmFit(v, design)
+vfit <- contrasts.fit(vfit, contrasts=contr.matrix)
+efit <- eBayes(vfit)
+plotSA(efit,main = "Final model: Mean-variance trend")
+mtext("Mean variance relationship", outer = TRUE, cex = 1.5)
+```
+
+###DE genes (significance cutoff)
+The significance cutoff in the decideTests function is defined using an adjusted p-value cutoff at 5% by default. The rownames indicate down-regulated (-1), unchanged (0), up-regulated (1).
+```{r}
+dT <- decideTests(efit)
+summary(dT)
+paste("Number of genes that are called significantly under-expressed both in treatment and library type:",length(which(dT[,1]==-1 & dT[,2]==-1)))
+paste("Number of genes that are called significantly over-expressed both in treatment and library type:",length(which(dT[,1]==1 & dT[,2]==1)))
+```
+Here we can see that more genes are called _significantlly differentially expressed due to library type_ (libtype, column 2) than due to treatment (treated, column 1). If we compare which genes are shared across the two contrasts we can observe that only a fraction is shared (under-expressed: `r length(which(dT[,1]==-1 & dT[,2]==-1))`, over-expressed: `r length(which(dT[,1]==1 & dT[,2]==1))`)
+
+Since the overlapp of genes that are called differentially expressed in the test above is small let's investigate if the expression change is different in magnitude (logFC).
+
+###DE genes (significance and logFC cutoff)
+```{r}
+tfit <- treat(efit, lfc=1)
+tdT <- decideTests(tfit)
+summary(tdT)
+```
+Interestingly, the number of genes that are differentially expressed can be reduced to zero if a minimal threshold for differential expression is set, here logFC of 1. The expression changes caused by the different library types are thus smaller then the changes due to the treatment
+
+
+###Accounting for the covariate library type (libtype)
+```{r}
+vennDiagram(dT,main="overlapp between DE genes for different contrasts")
+title(sub = "Most genes that are called DE are due to the confounding factor libtype \n this is in accordance with what we can observe in the MDS plots")
+```
+
+
+##Identify and plot (normalized) expression levels of a gene that is affected solely by library type.
+```{r}
+DE_lib <- which(dT[,2]!=0 & dT[,1]==0) #number of DE genes under the library type covariate that are not DE under the treatment condition
+paste("number of genes which are only DE under the library type covariate:",length(DE_lib))
+
+s <- labels(sample(DE_lib,1))
+paste("Randomly sampled one gene of the",length(DE_lib),"DE under libtype covariate:",s)
+
+barplot(as.vector(as.numeric(v[s,]$E)),
+        names.arg = c("T1","T2","T3","C1","C2","C3","C4"),
+        col = lib,
+        main = paste("gene",s))
+legend("bottomright",c("Single-end","Paired-end"),col = c(2,1),pch = 15)
+
+
+
+par(oma=c(2,0,0,0))
+layout(matrix(c(1:9), byrow=T, ncol=3))
+s2 <- labels(sample(DE_lib,8))
+for(genes in s2){
+barplot(as.vector(as.numeric(v[genes,]$E)),
+        names.arg = c("T1","T2","T3","C1","C2","C3","C4"),
+        col = lib,
+        main = paste("gene",s))
+}
+
+plot.new()
+plot.window(0:1, 0:1)
+legend("center","center",c("Single-end","Paired-end"),inset = 0,col = c(2,1),pch = 15,ncol = 1,title = "Library type",bty="n",cex = 0.9)
+```
+
+
+###Including covariates in analysis
+In summary, the analysis above has exemplified that covariates (both biological and technical) should be always included in the analysis and tested for. Especially, if as in our case, the MDS plot has shown a clustering pattern that is driven by a covariate. Ideally, the clustering pattern of the MDS plot (including more dimensions) and other diagnostic plots should be checked for the influences of other covariates.
+
+
+
+
+
+##Differential splicing
+
+#### Exercise 3. Fix the code to run a standard DEXSeq analysis and plot one of the top differentially spliced genes -- for example, see the plotDEXSeq() function.
+
+Next, we will explore "differential splicing", using the same pasilla dataset (Note: this was used in the pasilla manuscript).
+
+As usual, refer to the [vignette for the DEXSeq](https://bioconductor.org/packages/release/bioc/vignettes/DEXSeq/inst/doc/DEXSeq.pdf) or the documentation for further details.
+
+The code was changed according to the vignette for the DEXSeq package.
+```{r}
+source("https://bioconductor.org/biocLite.R")
+biocLite("pasilla")
+library(pasilla)
+sdir <- file.path(system.file(package="pasilla"),"extdata/")
+anno <- file.path(sdir, "Dmel.BDGP5.25.62.DEXSeq.chr.gff")
+
+samplesX = data.frame(cond = rep( c("trt","untrt"), c(3,4) ),
+                      type = c("SE","PE","PE","SE","SE","PE","PE"),
+                      countfile = dir(sdir,pattern="fb.txt"),
+                      stringsAsFactors = TRUE)
+samplesX
+```
+
+Below is some unevaluated code that represents a standard DEXSeq pipeline (you will need to make some modifications):
+
+```{r}
+### Changed code ###
+# source("https://bioconductor.org/biocLite.R")
+# biocLite("DEXSeq")
+suppressPackageStartupMessages( library( "DEXSeq" ) )
+
+sampleTable = data.frame(
+   row.names = c( "treated1", "treated2", "treated3",
+      "untreated1", "untreated2", "untreated3", "untreated4" ),
+   condition = c("knockdown", "knockdown", "knockdown",
+      "control", "control", "control", "control" ),
+   libType = c( "single-end", "paired-end", "paired-end",
+      "single-end", "single-end", "paired-end", "paired-end" ) )
+
+listfiles = list.files(sdir, pattern="fb.txt$", full.names=TRUE)
+
+flattenedFile = list.files(sdir, pattern="gff$", full.names=TRUE)
+basename(flattenedFile)
+
+dxd <- DEXSeqDataSetFromHTSeq(listfiles,sampleData = sampleTable,design = ~ sample + exon + condition:exon,flattenedfile = anno)
+dxd <- estimateSizeFactors( dxd )
+dxd <- estimateDispersions( dxd )
+dxd <- testForDEU( dxd )
+dxr <- DEXSeqResults( dxd )
+head(dxr)
+```
+
+Plotting one of the top differentially spliced genes using the package specific plot plotDEXSeq:
+```{r}
+paste("Number of exonic regions are significant with a false discovery rate of 10%")
+table ( dxr$padj < 0.1 )
+plotDEXSeq(dxr, "FBgn0000008", legend=TRUE, cex.axis=1.2, cex=1.3,lwd=2)
+```
+
+
+
+
