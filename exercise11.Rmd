@@ -1,0 +1,272 @@
+---
+title: "Exercise 11"
+author: "Hubert Rehrauer"
+date: "27 11 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Requirements
+We will use the packages "MLSeq"" and "MLInterfaces". Please install both.
+```{r, message=FALSE}
+# source("https://bioconductor.org/biocLite.R")
+# biocLite("MLInterfaces")
+library(MLInterfaces)
+# biocLite("MLSeq")
+library(MLSeq)
+```
+
+## Load the micro-RNA expression data
+
+The package MLSeq has some micro-RNA expression data from normal (N) and tumor samples (T). These can be loaded with
+```{r}
+cervicalFile = system.file("extdata/cervical.txt", package = "MLSeq", mustWork = TRUE)
+cervicalCounts_all = as.matrix(read.table(cervicalFile, header = TRUE))
+head(cervicalCounts_all)
+```
+
+
+The true class for each sample is given by
+```{r}
+cervicalClass = factor(substr(colnames(cervicalCounts_all), 1,1))
+head(cervicalClass)
+```
+
+## Normalization
+Use edgeR's TMM normalization to normalize the counts. Use the log-transformed counts-per-million values with a `prior.count=10`.
+```{r}
+library(edgeR)
+# From edgeR vigniette:
+# The calcNormFactors function normalizes for RNA composition by finding a set of scaling factors for the library sizes that minimize the log-fold changes between the samples for most genes
+calcNormFactors(cervicalCounts_all,method = "TMM") #TMM is the default method.
+# aveLogCPM: This function uses mglmOneGroup to compute average counts-per-million (AveCPM) for each row of counts, and returns log2(AveCPM)
+aveLogCPM(cervicalCounts_all, prior.count = 10)
+```
+
+
+
+
+## Visualization
+
+Create an MDS plot to get an idea of the separability of the samples.
+```{r}
+par(mfrow = c(1,2),oma = c(2,0,0,0))
+plotMDS(cervicalCounts_all,dim.plot = c(1,2),col = as.numeric(as.factor(cervicalClass)))
+title(main = "MDS plot, dim 1 & 2")
+plotMDS(cervicalCounts_all,dim.plot = c(3,4),col = as.numeric(as.factor(cervicalClass)))
+title(main = "MDS plot, dim 3 & 4")
+mtext("The MDS plot shows that the two classes (N and T) are partially seperated in the \n first two dimensions. The two classes can be separated but not completely",side = 1, line = 1,outer = TRUE)
+
+```
+
+
+## Nonspecific filtering
+
+In order to reduce the dimensionality, Use only those micro-RNAs where the row variance is larger then 0.5.
+```{r}
+#Row variance
+Rowvar <- apply(cervicalCounts_all,1,var)
+cervicalCounts <- cervicalCounts_all[Rowvar > 0.5,]
+paste("Original matrix has",nrow(cervicalCounts),"of which", nrow(cervicalCounts_all), "have a row variance larger than 0.5")
+```
+
+
+## k-nn classification
+
+Implement a k-nn classification with cross-validation use the function `knn.cv` from the package `class`.
+
+```{r}
+# install.packages("class")
+library(class)
+
+# classes:
+class = data.frame(condition = factor(rep(c(0, 1), c(29, 29)))) #29 
+
+data <- t(cervicalCounts)
+df  <- cbind(data, class)
+
+par(mfrow = c(2,2),oma = c(2,0,0,0))
+plot(df[,1], df[,2], 
+     main=paste("micro-RNAs:",colnames(df)[c(1,2)]), 
+     col=ifelse(as.character(df[,ncol(df)])==0, "red","blue"))
+plot(df[,101], df[,102], 
+     main=paste("micro-RNAs:",colnames(df)[c(101,102)]), 
+     col=ifelse(as.character(df[,ncol(df)])==0, "red","blue"))
+plot(df[,200], df[,201], 
+     main=paste("micro-RNAs:",colnames(df)[c(200,201)]), 
+     col=ifelse(as.character(df[,ncol(df)])==0, "red","blue"))
+plot(df[,401], df[,402], 
+    main=paste("micro-RNAs:",colnames(df)[c(401,402)]), 
+     col=ifelse(as.character(df[,ncol(df)])==0, "red","blue"))
+legend("bottomright", legend=c("N","T"), 
+    text.col=c("red","blue"), bty="o")
+mtext("Example differences in micro-RNA expression between conditions \n (different axis scaling between plots)",side = 1, line = 1,outer = TRUE)
+
+
+```
+
+
+
+#### Computing the f1-score (or f-score or f-measure)
+
+
+```{r}
+# The formula is:
+# Fscore = (2*Precision*Recall) / sum(Precision, Recall)
+# with:
+# precision = TP / (TP + FP)
+# recall    = TP / (TP + FN)
+
+#I was not able to extract the false and true positive and the false negative value from the knn classification.
+
+# On stackexchange I could find this and a helpful package, however I was not able to compute a F1 score.
+# https://stackoverflow.com/questions/8499361/easy-way-of-counting-precision-recall-and-f1-score-in-r
+#install.packages("ROCR")
+library(ROCR)
+#the performance function yields a recall precision curve and a vector of F1 scores.
+```
+
+
+## MLInterfaces
+
+Implement the same scheme using the MLInterfaces package., and using knn.cv's internal cross-valdiation scheme. For that the data needs to be casted in a variable of class `ExpressionSet`
+```{r, eval=FALSE}
+c <- data.frame(classification = cervicalClass)
+rownames(c) <- colnames(cervicalCounts)
+c_annotated <- AnnotatedDataFrame(c)
+
+cervES = new("ExpressionSet", exprs=cervicalCounts, phenoData=c_annotated)
+```
+
+The k-nn classifier with cross-validation is now implemented as:
+
+```{r, eval=FALSE}
+knn1 = MLearn(classification~., cervES, knn.cvI(k=5), trainInd=1:ncol(cervES))
+confuMat(knn1)
+```
+
+
+Setup a balanced k-fold cross-validation scheme
+```{r, eval=FALSE}
+k = 10
+knnCv = MLearn(classification~., cervES, knnI(k=5), xvalSpec("LOG", k, balKfold.xvspec(k)))
+confuMat(knnCv)
+```
+
+The confusion matrix compares the true classification with the predicted classification and yields an overview of the performance of the used algorithm and parameters.
+
+
+## Other classifiers
+
+Compute the performance of the diagonal linear discriminant analysis and support vector machines provided by MLInterfaces.
+
+```{r}
+# I am not sure how to answer this question. I run a code below that uses svm and random forest to classify the cervical dataset. 
+```
+
+
+
+
+
+## Other classifiers and additional code
+
+
+The bioconductor website offered a very interesting example on the knn.cv function plus different ML techniques that are used here and run in a modified version below: https://www.bioconductor.org/help/course-materials/2014/SeattleOct2014/B02.3_MachineLearning.html
+```{r}
+#Split the data into test and training datasets:
+
+set.seed(9) #Set seed is set in order to keep the sampling for splitting the dataset reproducible between runs.
+nTest = ceiling(ncol(cervicalCounts) * 0.2)
+ind = sample(ncol(cervicalCounts), nTest, FALSE) #take randomly 20% of rows / features
+
+#Training data: 80%
+cervicalCounts.train = cervicalCounts[, -ind]
+cervicalCounts.train = as.matrix(cervicalCounts.train + 1) #to every value +1 is added. 
+class_train = data.frame(condition = class[-ind, ]) # also take the corresponding class labels
+
+#Testing data: 20%
+cervicalCounts.test = cervicalCounts[, ind]
+cervicalCounts.test = as.matrix(cervicalCounts.test + 1) #to every value +1 is added. 
+class_test = data.frame(condition = class[ind, ]) # also take the corresponding class labels
+```
+
+```{r}
+newknn <- function( testset, trainset, testclass, trainclass, k) #function used from the bioconductor website
+{
+    pred.train <- knn.cv(trainset, trainclass, k=k)
+    pred.test <- knn(trainset, testset, trainclass, k=k)
+
+    test_fit <- length(which(mapply(identical, as.character(pred.test), 
+        testclass)==FALSE))/length(testclass)
+
+    train_fit <- length(which(mapply(identical, as.character(pred.train), 
+            trainclass)==FALSE))/length(trainclass)
+
+    c(train_fit=train_fit, test_fit= test_fit)
+}
+
+trainset <- t(cervicalCounts.train)
+testset <- t(cervicalCounts.test)
+testclass <- t(class_test)
+trainclass <- t(class_train)
+klist <- 1:40 # number of neighbors
+```
+
+```{r}
+ans <- lapply(klist, function(x) newknn(testset, trainset, testclass, trainclass,k =x)) #running the function for different numbers of neigbors
+resdf <- t(as.data.frame(ans))
+rownames(resdf) <- NULL
+```
+
+```{r}
+plot(klist, resdf[,"train_fit"], col="blue", type="b",ylim=c(range(resdf)),
+    main="k Nearest Neighbors for Cervical Data", xlab="No of neighbors", 
+    ylab ="Training and Test Error")
+points(klist, resdf[,"test_fit"], col="red", type="b")
+legend("bottomright", legend=c("Training error","Test error"), 
+    text.col=c("blue","red"), bty="n")
+```
+This plot illustrates how the quality of the classification (training and test error) changes depending on the number of neighbors that are used. We can observe that lower number of neighbors should be preferred.
+
+## Using random forest to predict class labels for cervical data:
+```{r}
+# Training data
+cerv_trained = DESeqDataSetFromMatrix(countData = cervicalCounts.train, 
+        colData = class_train, formula(~condition))
+cerv_trained = DESeq(cerv_trained, fitType = "local")
+
+# Testing data
+cerv_test = DESeqDataSetFromMatrix(countData = cervicalCounts.test, colData = class_test,
+formula(~condition))
+cerv_test = DESeq(cerv_test, fitType = "local")
+```
+
+```{r}
+# install.packages("e1071")
+library(e1071)
+rf = classify(data = cerv_trained, method = "randomforest", normalize = "deseq",
+deseqTransform = "vst", cv = 5, rpt = 3, ref = "1")
+
+# Display information about the trained model and its performance
+trained(rf)
+```
+
+```{r}
+# Confusion matrix: comparing predicted to the true class labels
+pred.rf = predictClassify(rf, cerv_test)
+table(pred.rf, relevel(cerv_test$condition, 2))
+```
+
+The trained model using random forest performs very well.
+
+A model can also be trained using svm, however, the performance is lower:
+```{r}
+rf = classify(data = cerv_trained, method = "svm", normalize = "deseq",
+deseqTransform = "vst", cv = 5, rpt = 3, ref = "1")
+pred.rf = predictClassify(rf, cerv_test)
+table(pred.rf, relevel(cerv_test$condition, 2))
+```
