@@ -1,0 +1,118 @@
+---
+title: "Exercise 12: dimension reduction in single-cell datasets"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## scRNA-seq exercise
+
+Download one of the scRNA-seq datasets (use the 'Download .rds' button) from the [conquer database](http://imlspenticton.uzh.ch:3838/conquer/); keep in mind that the larger the number of cells, the larger the file will be.  Also, it may be more interesting to pick a dataset where you can see reasonably distinct cell subtypes/subsets, so you may want to first click in the 'scater report' link for a dataset and look through some of the dimension reduction plots.
+
+After downloading, read the dataset into R (use 'readRDS') and understand the format of the data that you get (Note: there is a 'Tutorial' tab on the main conquer page that contains useful information).  You may also want to check the corresponding QC metrics from conquer; for example, click on the 'MultiQC report' links to see more details for your dataset.
+
+## Libraries
+```{r}
+# source("https://bioconductor.org/biocLite.R")
+# biocLite("MultiAssayExperiment")
+library(SummarizedExperiment) # assays function
+library(MultiAssayExperiment)
+library(edgeR) # for cpm function
+library(Rtsne) #t-SNE plot
+library(ggplot2)
+library(ggfortify) # PCA plot
+library(matrixStats) # for rowVars function
+```
+
+
+## Download study
+```{r}
+GSE66507 <- readRDS("GSE66507.rds")
+class(GSE66507)
+```
+
+
+## Obtaining the counts table and calculating counts per million
+```{r}
+# Test A, extracting TPM values
+# experiments(GSE66507)
+# GSE66507_gene <- experiments(GSE66507)[["gene"]]
+# tpm <- assays(GSE66507_gene)[["TPM"]]
+
+# Extracting count values 
+x <- assays(experiments(GSE66507)[["gene"]])
+count <- x[["count"]]
+expressed_genes <- rowSums(count > 0) >= 1 # only keep rows which have at least one non zero entry
+count <- count[expressed_genes, ]
+count_cpm <- cpm(count)
+```
+
+## log transform
+```{r}
+eps <- 1 # to avoid taking the log of zero
+count_cpm_log <- log(count_cpm + 1)
+```
+
+## Filter out the genes with the highest variance across samples
+
+#### Plot mean variance trend
+```{r}
+library(limma)
+v <- voom(count,plot=TRUE) # use voom to display the mean - variance trend
+```
+
+
+#### Filter out most varying genes
+```{r}
+rowvar <- rowVars(count_cpm_log) 
+index <- order(rowvar, decreasing = TRUE)[1:500]
+count_cpm_log = count_cpm_log[index,] # only keep the 500 most varying genes in the matrix
+dim(count_cpm_log)
+
+#It is also possible to do this via the rownames and not the indices:
+# var <- RowVar(count_cpm_log)
+# names <- names(sort(var,decreasing = TRUE)[1:500])
+# t <- t[names,] # keep only the 500 most variable genes
+```
+
+## Projecting the data to 2 or 3 dimensions
+
+###t-SNE
+```{r}
+#Preparation
+lineage <- GSE66507@colData@listData$characteristics_ch1.1
+cols <- as.numeric(as.factor(lineage))
+
+#Plot data
+t_plot <- as.matrix(t(count_cpm_log))
+
+#Plotting
+set.seed(1)
+tSNE <- Rtsne(t_plot, perplexity = 3, pca = FALSE)
+plot(tSNE$Y,main='tSNE plot',pch = 1, col = cols)
+legend("bottomright", levels(as.factor(lineage)), col = levels(as.factor(cols)), pch = 1)
+```
+The samples can be well separated between Trophoectoderm and the other two, however, there is only very limited ability to separate the Epiblast and the Primitive Endoderm.
+
+```{r}
+# Proprocessing for ggplot
+lineage <- GSE66507@colData@listData$characteristics_ch1.1
+lineage_vector <- as.vector(as.character(lineage))
+
+# This dataframe combines the data matrix together with the metadata. However, it is not fed to the plotting function directly but read as "data" and can then be called for the plotting to add coloring and other information
+info <- cbind(t_plot,lineage_vector)
+
+set.seed(1)
+autoplot(prcomp(t_plot),main = "Principal Component Analysis")
+
+autoplot(prcomp(t_plot),data = info,colour = "lineage_vector",main = "Principal Component Analysis colored by lineage")
+```
+
+
+##Interpretation of PCA analysis - partial success
+
+As in the t-SNE analysis, the samples can be well separated between Trophoectoderm and the other two, however, there is only very limited ability to separate the Epiblast and the Primitive Endoderm.
+
+In summary of both analysis, I would say we are successful to differentiate the samples and recover biological information. However, if the two closely clustered samples are biologically truly different we need to find a way to recapitulate this difference in our analysis.
