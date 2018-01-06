@@ -1,0 +1,721 @@
+---
+title: "Salmon"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+---
+
+# Trimming reads
+* installing cutadapt: Sudo pip3 install cutadapt
+
+
+```{r, LOOP}
+untrimmed_dir <- "/Users/cys/Desktop/STA426_project/untrimmed"
+data_dir <- "/Users/cys/Desktop/STA426_project/trimmed"
+
+files <-dir(untrimmed_dir)[grep("fastq",dir(untrimmed_dir))]
+files <- files[1:length(files)]
+f1 <- files[grep("_1",files)]
+f2 <- files[grep("_2",files)]
+name <- unname(sapply(f1,function(x){strsplit(x,"_")[[1]][1]}))
+name[1]
+
+for (i in 1:length(f1)) {
+  print(i)
+  print(f1[i])
+  print(f2[i])
+  print(name[i])
+  
+  (cmd <- sprintf("cutadapt --trim-n -m 15 -o %s -p %s -a %s -A %s %s %s",
+                paste0(data_dir, "/late/","trimmed_",f1[i]),
+                paste0(data_dir, "/late/","trimmed_",f2[i]),
+                "CTGTCTCTTATACACATCTCCGAGCCCACGAGA",
+                "CTGTCTCTTATACACATCTGACGCTGCCGACGA",
+                paste0(untrimmed_dir, "/",f1[i]),
+                paste0(untrimmed_dir, "/",f2[i])
+                ))
+  system(cmd)
+}
+
+```
+
+# Alignment with STAR
+
+### Technical aspect: HPC environment (Euler)
+
+#### Transferred to Euler SCRATCH directory
+* trimmed fastq files as batch to /cluster/scratch/statzerc/trimmed
+* GTF file:
+scp -r /Users/cys/Desktop/STA426_project/Reference_FASTA/Caenorhabditis_elegans.WBcel235.dna.toplevel.fa statzerc@euler.ethz.ch:/cluster/scratch/statzerc/genome
+* genome FASTA file:
+scp -r /Users/cys/Desktop/STA426_project/Reference_FASTA/Caenorhabditis_elegans.WBcel235.dna.toplevel.fa statzerc@euler.ethz.ch:/cluster/scratch/statzerc/genome
+
+
+
+* connect to EULER
+
+* module purge
+
+* module load star/2.5.3a, samtools/1.2,
+
+* uploading files to euler:
+Swan:~ cys$ scp -r /Users/cys/Desktop/STA426_project/Reference_FASTA statzerc@euler.ethz.ch:/cluster/scratch/statzerc/Celeg_ref
+
+* submitting a STAR job in batch mode:
+bsub [LSF options] "STAR [STAR options]"
+
+### STAR: Indexing the C. elegans genome
+
+* Download from: http://www.ensembl.org/info/data/ftp/index.html
+```{r}
+#Euler:
+cd /cluster/scratch/statzerc/genome
+
+vi IndexingScript.sh
+
+    module load star
+    cd /cluster/scratch/statzerc/genome
+    echo "switched to genome directory and about to start STAR!"
+    STAR --runThreadN 12 --runMode genomeGenerate --genomeDir ./ --genomeFastaFiles       ./Caenorhabditis_elegans.WBcel235.dna.toplevel.fa --sjdbGTFfile ./Caenorhabditis_elegans.WBcel235.91.gtf   --sjdbOverhang 100
+    
+bsub -n 24 -o output_file < IndexingScript.sh
+#successfully completed
+```
+
+completed in 3 minutes
+
+
+### STAR: Aligning the reads
+```{r}
+mkdir /cluster/scratch/statzerc/alignment
+cd /cluster/scratch/statzerc/alignment
+
+vi AlignmentScript.sh
+    module load star
+    cd /cluster/scratch/statzerc/alignment
+    echo "starting alignment with STAR"
+    
+    STAR --runThreadN 12 --genomeDir /cluster/scratch/statzerc/genome/ --sjdbGTFfile /cluster/scratch/statzerc/genome/Caenorhabditis_elegans.WBcel235.91.gtf --sjdbOverhang 100 --readFilesIn /cluster/scratch/statzerc/trimmed/trimmed_ERR1474690_1.fastq /cluster/scratch/statzerc/trimmed/trimmed_ERR1474690_2.fastq
+    
+bsub -n 24 -R "rusage[mem=2048]" -o output_file < AlignmentScript.sh
+
+# Success
+    # CPU time :                                   17960.70 sec.
+    # Max Memory :                                 19668 MB
+    # Average Memory :                             12467.31 MB
+    # Total Requested Memory :                     49152.00 MB
+    # Delta Memory :                               29484.00 MB
+
+# Next add this at the end#
+#--outSAMtype BAM SortedByCoordinate (add this to last line)
+```
+
+```{r}
+mkdir /cluster/scratch/statzerc/alignment2
+cd /cluster/scratch/statzerc/alignment2
+
+vi AlignmentScript2.sh
+module load star
+cd /cluster/scratch/statzerc/alignment2
+echo "starting alignment with STAR"
+STAR --runThreadN 24 --genomeDir /cluster/scratch/statzerc/genome/ --sjdbGTFfile /cluster/scratch/statzerc/genome/Caenorhabditis_elegans.WBcel235.91.gtf --sjdbOverhang 100 --readFilesIn /cluster/scratch/statzerc/trimmed/trimmed_ERR1474691_1.fastq /cluster/scratch/statzerc/trimmed/trimmed_ERR1474691_2.fastq --outSAMtype BAM SortedByCoordinate
+    
+bsub -n 24 -R "rusage[mem=2048]" -o output_file < AlignmentScript2.sh
+
+```
+
+
+```{r}
+#alignment3
+mkdir /cluster/scratch/statzerc/alignment3
+cd /cluster/scratch/statzerc/alignment3
+
+vi AlignmentScript3.sh
+module load star
+cd /cluster/scratch/statzerc/alignment3
+echo "starting alignment with STAR"
+STAR --runThreadN 24 --runMode alignReads --genomeDir /cluster/scratch/statzerc/genome/ --sjdbGTFfile /cluster/scratch/statzerc/genome/Caenorhabditis_elegans.WBcel235.91.gtf --sjdbOverhang 100 --readFilesIn /cluster/scratch/statzerc/trimmed/trimmed_ERR1474691_1.fastq /cluster/scratch/statzerc/trimmed/trimmed_ERR1474691_2.fastq --outSAMtype BAM Unsorted SortedByCoordinate --quantMode GeneCounts
+
+
+bsub -W 00:30 -n 24 -R "rusage[mem=2048]" -o output_file < AlignmentScript3.sh
+
+
+```
+
+```{r}
+#alignment4
+mkdir /cluster/scratch/statzerc/alignment4
+cd /cluster/scratch/statzerc/alignment4
+
+vi AlignmentScript4.sh
+module load star
+cd /cluster/scratch/statzerc/alignment4
+echo "starting alignment with STAR"
+STAR --runThreadN 24 --runMode alignReads --genomeDir /cluster/scratch/statzerc/genome/ --sjdbGTFfile /cluster/scratch/statzerc/genome/Caenorhabditis_elegans.WBcel235.91.gtf --sjdbOverhang 100 --readFilesIn /cluster/scratch/statzerc/trimmed/trimmed_ERR1474692_1.fastq /cluster/scratch/statzerc/trimmed/trimmed_ERR1474692_2.fastq --outSAMtype BAM Unsorted --quantMode GeneCounts
+
+
+bsub -W 00:20 -n 24 -R "rusage[mem=2048]" -o output_file < AlignmentScript4.sh
+```
+
+
+```{r}
+#alignment5
+mkdir /cluster/scratch/statzerc/alignment5
+cd /cluster/scratch/statzerc/alignment5
+
+vi AlignmentScript5.sh
+module load star/2.5.3a
+cd /cluster/scratch/statzerc/alignment5
+echo "starting alignment with STAR"
+STAR --runThreadN 24 --runMode alignReads --genomeDir /cluster/scratch/statzerc/genome/ --sjdbGTFfile /cluster/scratch/statzerc/genome/Caenorhabditis_elegans.WBcel235.91.gtf --sjdbOverhang 100 --readFilesIn /cluster/scratch/statzerc/trimmed/trimmed_ERR1474690_1.fastq /cluster/scratch/statzerc/trimmed/trimmed_ERR1474690_2.fastq --outSAMtype BAM Unsorted SortedByCoordinate --quantMode GeneCounts
+
+
+bsub -W 01:00 -n 48 -R "rusage[mem=2048]" < AlignmentScript5.sh
+```
+It worked:)
+
+
+```{r}
+#alignment6
+mkdir /cluster/scratch/statzerc/alignment6
+cd /cluster/scratch/statzerc/alignment6
+
+vi AlignmentScript6.sh
+module load star/2.5.3a
+cd /cluster/scratch/statzerc/alignment6
+echo "starting alignment with STAR"
+STAR --runThreadN 24 --runMode alignReads --genomeDir /cluster/scratch/statzerc/genome/ --sjdbGTFfile /cluster/scratch/statzerc/genome/Caenorhabditis_elegans.WBcel235.91.gtf --sjdbOverhang 100 --readFilesIn /cluster/scratch/statzerc/trimmed/trimmed_ERR1474693_1.fastq /cluster/scratch/statzerc/trimmed/trimmed_ERR1474693_2.fastq --outSAMtype BAM Unsorted SortedByCoordinate --quantMode GeneCounts
+
+
+bsub -W 03:00 -n 24 -R "rusage[mem=2048]" -o output_file6 < AlignmentScript6.sh
+```
+It worked:)
+
+## ADD THIS TO STAR ANALYSIS:
+–alignIntronMax 50000
+–outSAMstrandField intronMotif   (this adds the XS flag, needed by the read quantification program)
+–outFilterType BySJout
+
+Note found online: For non-strand-specific data, you need to use STAR option --outSAMstrandField intronMotif which will add the XS attribute to all canonically spliced alignments using their introns' motifs - that's exactly what Cufflinks needs.
+
+--outFilterType BySJout could help clean up rare junctions
+```{r}
+#alignment7 - including more parameters
+mkdir /cluster/scratch/statzerc/alignment7
+cd /cluster/scratch/statzerc/alignment7
+
+vi AlignmentScript7.sh
+module load star/2.5.3a
+cd /cluster/scratch/statzerc/alignment7
+echo "starting alignment with STAR"
+STAR --runThreadN 24 --runMode alignReads --genomeDir /cluster/scratch/statzerc/genome/ --alignIntronMax 50000 --sjdbGTFfile /cluster/scratch/statzerc/genome/Caenorhabditis_elegans.WBcel235.91.gtf --sjdbOverhang 100 --readFilesIn /cluster/scratch/statzerc/trimmed/trimmed_ERR1474693_1.fastq /cluster/scratch/statzerc/trimmed/trimmed_ERR1474693_2.fastq --outSAMtype BAM Unsorted SortedByCoordinate --outSAMstrandField intronMotif --outFilterType BySJout --quantMode GeneCounts
+
+
+bsub -W 03:00 -n 24 -R "rusage[mem=2048]" -o output_file7_newParam.txt < AlignmentScript7.sh
+```
+
+
+```{r}
+# STAR --runThreadN 24 \
+# --runMode alignReads \ 
+# --genomeDir my_genome \
+# --readFilesIn S1_read1.fq.gz \
+#     S1_read2.fq.gz \
+# --outFileNamePrefix output/S1/ \
+# --outSAMtype BAM SortedByCoordinate \
+# --quantMode GeneCounts
+```
+
+### SAMTOOLS: Merging bam files
+```{r}
+# WITHIN THE alignment4 directorz
+# 
+# vi samtools_sorter.sh
+# load module samtools
+# cd /cluster/scratch/statzerc/alignment4
+# echo "Starting samtools!"
+# samtools sort Aligned.out.bam -o samtools_sorted.bam
+#     
+# # bsub -W 00:30 -n 24 -o output_file < samtools_sorter.sh #did not finish and output_file was 1GB
+# bsub -W 03:30 -n 24 < samtools_sorter.sh # I tried this
+
+```
+
+### Samtools merging bam files
+```{r}
+mkdir /cluster/scratch/statzerc/samtool_merge
+cd /cluster/scratch/statzerc/samtool_merge
+
+vi samtools_merge.sh
+module load samtools
+samtools merge merged_al5_al6.bam /cluster/scratch/statzerc/alignment5/Aligned.sortedByCoord.out.bam /cluster/scratch/statzerc/alignment6/Aligned.sortedByCoord.out.bam
+
+bsub -W 02:00 -n 24 -R "rusage[mem=2048]" -o output_merging_2.txt < samtools_merge.sh
+
+```
+
+
+# SAJR
+1) Download all SAJR files from: http://storage.bioinf.fbb.msu.ru/~mazin/downloads.html
+Swan:SAJR cys$ ls -ltr /Users/cys/Desktop/STA426_project/SAJR 
+total 423152
+-rw-------@ 1 cys  staff    3525279 Sep 13  2012 a.gff
+-rw-------@ 1 cys  staff  113130504 Mar 27  2014 1.bam
+-rw-------@ 1 cys  staff   94000669 Mar 27  2014 2.bam
+-rw-------@ 1 cys  staff     368016 Mar 27  2014 2.bam.bai
+-rw-------@ 1 cys  staff     372600 Mar 27  2014 1.bam.bai
+-rw-------@ 1 cys  staff       3139 Dec 12  2016 example.R
+-rw-------@ 1 cys  staff      29260 Dec 12  2016 output.pdf
+-rw-------@ 1 cys  staff       1451 Mar 21  2017 sjv.config
+-rw-------@ 1 cys  staff      15147 Aug 23 16:27 SAJR.tar.gz
+-rw-------@ 1 cys  staff    1664984 Aug 23 16:27 sajr.jar
+-rw-------@ 1 cys  staff       2717 Aug 23 16:27 sajr.config
+-rw-------@ 1 cys  staff    3515216 Aug 23 16:27 sjv.jar
+-rw-r--r--@ 1 cys  staff        263 Jan  3 23:01 SAJR.Rmd
+
+2) cd /Users/cys/Desktop/STA426_project/SAJR
+
+3) Swan:SAJR cys$ java -jar sajr.jar count_reads
+
+
+
+
+
+
+# Salmon
+This script has been adapted from the sta426 lecture course.
+
+##Preparation
+
+### Set paths
+```{r}
+data_dir <- "/Users/cys/Desktop/STA426_project/trimmed" #location of fastq files
+output_dir <- "/Users/cys/Desktop/STA426_project/Salmon_output" #Here will be my output files
+```
+
+```{r}
+path_to_salmon <- "DYLD_FALLBACK_LIBRARY_PATH=/Users/cys/Desktop/STA426_project/Binaries/salmon/lib /Users/cys/Desktop/STA426_project/Binaries/salmon/bin/salmon"
+```
+
+```{r}
+## Create subfolders
+system(sprintf("mkdir -p %s/RNAseq", output_dir))
+system(sprintf("mkdir -p %s/RNAseq/reference_Celeg/index", output_dir))
+```
+
+## Reference files
+
+All reference files were downloaded from ENSEMBL.
+__[Ensembl](http://www.ensembl.org/info/data/ftp/index.html)__
+
+### Merge coding and noncoding RNA reference files
+Only run once - then the combined file is created in the specified directory.
+* The goal here is to assemble all available cDNA information into one file to be then used by Salmon to align the reads to.
+```{r,eval=FALSE}
+(cmd <- sprintf("cat %s %s > %s",
+                "/Users/cys/Desktop/STA426_project/Reference_FASTA/Caenorhabditis_elegans.WBcel235.cdna.all.fa", #coding RNA
+                "/Users/cys/Desktop/STA426_project/Reference_FASTA/Caenorhabditis_elegans.WBcel235.ncrna.fa", #Non Coding RNA
+                paste0(output_dir, "/RNAseq/reference_Celeg/Celeg_cdna.ncrna.fa")))
+system(cmd)
+```
+
+### Index reference transcriptome for use with Salmon
+Only run once - then the combined file is created in the specified directory
+```{r, eval=FALSE}
+(cmd <- sprintf("%s index -t %s -i %s -p 1",
+                path_to_salmon,
+                paste0(output_dir, "/RNAseq/reference_Celeg/Celeg_cdna.ncrna.fa"),
+                paste0(output_dir, "/RNAseq/reference_Celeg/Celeg_cdna.ncrna.sidx")))
+# system(cmd)
+print("Index reference transcriptome")
+```
+
+### Quantify transcript abundances
+Run for every fastq file in the directory once.
+Careful, this is the step that takes the longest and it should only be repeated if the parameters have been changed. On my computer a standard paired end run takes 19 min using the specified settings below.
+
+
+```{r,eval=FALSE}
+files <-dir(data_dir)[grep("fastq",dir(data_dir))]
+files <- files[1:length(files)]
+f1 <- files[grep("_1",files)]
+f2 <- files[grep("_2",files)]
+name <- unname(sapply(f1,function(x){strsplit(x,"_")[[1]][2]}))
+name[1]
+
+for (i in 1:length(f1)) {
+  print(i)
+  print(f1[i])
+  print(f2[i])
+  print(name[i])
+
+  (cmd <- sprintf("%s quant -i %s -l A -1 %s -2 %s -o %s -p 1",
+                path_to_salmon,
+                paste0(output_dir, "/RNAseq/reference_Celeg/Celeg_cdna.ncrna.sidx"),
+                paste0(data_dir, "/", f1[i]),
+                paste0(data_dir, "/", f2[i]),
+                paste0(output_dir, "/RNAseq","/",name[i])))
+  system(cmd)
+  print("Salmon quantification finished")
+}
+```
+untrimmed_dir <- "/Users/cys/Desktop/STA426_project/untrimmed"
+trimmed_dir <- "/Users/cys/Desktop/STA426_project/trimmed"
+
+files <-dir(untrimmed_dir)[grep("fastq",dir(untrimmed_dir))]
+files <- files[1:length(files)]
+f1 <- files[grep("_1",files)]
+f2 <- files[grep("_2",files)]
+name <- unname(sapply(f1,function(x){strsplit(x,"_")[[1]][1]}))
+name[1]
+
+for (i in 1:length(f1)) {
+  print(i)
+  print(f1[i])
+  print(f2[i])
+  print(name[i])
+  
+  (cmd <- sprintf("cutadapt --trim-n -m 15 -o %s -p %s -a %s -A %s %s %s",
+                paste0(trimmed_dir, "/","trimmed_",f1[i]),
+                paste0(trimmed_dir, "/","trimmed_",f2[i]),
+                "CTGTCTCTTATACACATCTCCGAGCCCACGAGA",
+                "CTGTCTCTTATACACATCTGACGCTGCCGACGA",
+                paste0(untrimmed_dir, "/",f1[i]),
+                paste0(untrimmed_dir, "/",f2[i])
+                ))
+  print(cmd)
+  #system(cmd)
+  }
+
+
+```{r}
+system(sprintf("head %s/RNAseq/ERR1474690/quant.sf", output_dir))
+```
+
+### Generate transcript-to-gene mapping
+
+Our goal is to perform this analysis on the gene-level. This means that we have to link the different transcripts to the genes they originate from to be able to then quantify the gene expression.
+* For example, if four transcripts stem from the same gene they are in this step all linked to this locus and their counts then summed up to take the transcript-level quantification to a gene-level quantification.
+
+```{r}
+system(sprintf("head %s/RNAseq/reference_Celeg/Celeg_cdna.ncrna.fa", output_dir))
+```
+### transcript-to-gene mapping
+Which transcripts belong to the same gene --> saved in the tx2gene dataframe
+- run once
+```{r}
+# source("https://bioconductor.org/biocLite.R")
+# biocLite("Biostrings")
+suppressPackageStartupMessages(library(Biostrings))
+
+## Read the fasta file in R using a function from the Biostrings package
+cdna.ncrna <- readDNAStringSet(paste0(output_dir,"/RNAseq/reference_Celeg/Celeg_cdna.ncrna.fa"))
+
+## Go through the sequence names and extract the required information
+tx2gene <- data.frame(t(sapply(names(cdna.ncrna), function(nm) {
+  tmp <- strsplit(nm, " ")[[1]]
+  tx <- tmp[1]
+  gene <- gsub("gene:", "", tmp[grep("^gene:", tmp)])
+  c(tx = tx, gene = gene)
+})), stringsAsFactors = FALSE)
+rownames(tx2gene) <- NULL
+
+head(tx2gene)
+```
+## Differential gene expression
+
+Generate all file paths to to the Salmon quantification files (qunat.sf) of this experiment.
+```{r}
+dirs <- list.files(paste0(output_dir,"/RNAseq"), full.names = TRUE)
+dirs <- dirs[grep("ERR",dirs)]
+files <- paste0(dirs, "/quant.sf")
+names(files) <- basename(dirs)
+files
+```
+
+Assemble the individual quantification files into an overall quantification matrix. The columns are the individual runs (each two paired-end fastq files) and the rows are the genes to which the transcripts match.
+```{r}
+#source("https://bioconductor.org/biocLite.R")
+#biocLite("tximport")
+txi <-tximport::tximport(files = files, type = "salmon", tx2gene = tx2gene, dropInfReps = TRUE)
+```
+
+
+```{r}
+head(txi$counts)
+colSums(txi$counts)
+```
+
+```{r}
+#biocLite("edgeR")
+suppressPackageStartupMessages(library(edgeR))
+dge <- DGEList(counts = txi$counts, genes = data.frame(gene.id = rownames(txi$counts)))
+dge
+```
+
+
+```{r}
+# Add gene annotation information using biomart
+suppressPackageStartupMessages(library(biomaRt))
+ensembl <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", 
+                   dataset="celegans_gene_ensembl", host = "www.ensembl.org")
+convtable <- getBM(ensembl, attributes = c("ensembl_gene_id", "entrezgene", "wikigene_name"),
+                   filters = "ensembl_gene_id", values = as.character(dge$genes$gene.id))
+dge$genes$symbol <- convtable$wikigene_name[match(dge$genes$gene.id, convtable$ensembl_gene_id)]
+dge$genes$entrez <- convtable$entrezgene[match(dge$genes$gene.id, convtable$ensembl_gene_id)]
+
+head(dge$genes)
+```
+
+
+```{r}
+# Summarizing all conditions in one grouping column -> see edgeR manual 3.3.1
+
+dge <- calcNormFactors(dge) # calculate normalization factors for later expression-level filtering
+
+# Add experimental conditions: normal (N2) to long-lived (eat-2)
+meta <- data.frame("Run" = names(files),
+              "Strain" = c(rep(c("eat2","N2"),each = 8),rep(c("eat2","N2"),each = 8)), 
+              "RNAi" = rep(c("ev","sfa1","ev","sfa1","ev","sfa1","ev","sfa1"),each = 4),
+              "Age" = c(rep("15",16),rep("3",16)))
+
+ID <- factor(paste(meta$Strain,meta$RNAi,meta$Age,sep="."))
+meta <- data.frame(meta,ID)
+
+dge$samples <- merge(dge$samples, meta, by.x = 0, by.y = "Run", all = TRUE)
+#dge$samples$Strain <- relevel(factor(dge$samples$Strain), ref = "N2")
+dge
+```
+
+I set the cutoff value for low expression to rowSums of 3 in order that one outlier sample per condition (4 replicates per condition) does not lead to the removal of the gene
+```{r}
+# Filtering step explained: In how many experiments (rowSums) were more than 0.5 copies measured per million of copies and then only keep the genes for which this is true for at least three studies (four of the total number of rows
+cpm <- cpm(dge)
+dge <- dge[which(rowSums(cpm > 0.5) > 3), , keep.lib.sizes = FALSE] # remove lowly expressed genes:
+dge <- calcNormFactors(dge) # calculate normalization factors again now the data was filtered
+```
+
+
+```{r}
+# design <- model.matrix(~Strain + RNAi + age, data = dge$samples)
+
+design <- model.matrix(~0+ID)
+colnames(design) <- levels(ID)
+dge <- estimateDisp(dge, design = design)
+design
+```
+
+
+
+```{r}
+par(mfrow = c(1,2),mar = c(7,4,4,2),mai = c(1.2,1,1,0.5))
+
+d3 <- dge[,dge$samples$age ==3]
+plotMDS(d3,
+        labels = d3$samples$Strain,
+        col = as.numeric(factor(d3$samples$RNAi)),
+        main = "day 3")
+legend("bottomleft",c("ev","sfa-1"),col = c(1,2), bty = "n",pch = 15)
+mtext("Sample clustering is driven by strain while RNAi state \n does not appear to have an effect ",side = 1, line = 5,cex = 0.8,outer = FALSE)
+
+
+d15 <- dge[,dge$samples$age == 15]
+plotMDS(d15,
+        labels = d15$samples$Strain,
+        col = as.numeric(factor(d15$samples$RNAi)),
+        main = "day 15")
+legend("bottomleft",c("ev","sfa-1"),col = c(1,2), bty = "n", pch = 15)
+
+mtext("The sample clustering is governed mostly by the \n RNAi condition and not by strain.",side = 1, line = 5,cex = 0.8,outer = FALSE)
+
+```
+
+
+
+
+
+```{r}
+# install.packages("statmod")
+library(statmod)
+## Quasi-likelihood test
+fit <- glmQLFit(dge, design = design, robust = TRUE)
+#qlf <- glmQLFTest(fit, coef = "Strain") #use this if you don't define contrasts
+
+# Defining contrasts
+# > my.contrasts <- makeContrasts(
+# +         Drug.1vs0 = Drug.1h-Drug.0h,
+# +         Drug.2vs0 = Drug.2h-Drug.0h,
+# +         Placebo.1vs0 = Placebo.1h-Placebo.0h,
+# +         Placebo.2vs0 = Placebo.2h-Placebo.0h,
+# +         DrugvsPlacebo.0h = Drug.0h-Placebo.0h,
+# +         DrugvsPlacebo.1h = (Drug.1h-Drug.0h)-(Placebo.1h-Placebo.0h),
+# +         DrugvsPlacebo.2h = (Drug.2h-Drug.0h)-(Placebo.2h-Placebo.0h),
+# + levels=design)
+
+
+
+
+
+
+
+## Alt: Likelihood ratio test
+## fit <- glmFit(dge, design = design)
+## lrt <- glmLRT(fit, coef = "dextrt")
+
+tt <- topTags(qlf, n = Inf)
+head(tt$table)
+```
+
+```{r}
+write.table(tt$table, file = paste0(output_dir, "/DGE_results_edgeR.txt"), 
+            row.names = FALSE, col.names = TRUE, quote = FALSE, sep = "\t")
+```
+
+```{r}
+hist(tt$table$PValue)
+```
+
+
+```{r}
+is.de <- decideTestsDGE(qlf, p.value = 0.1)
+summary(is.de)
+plotSmear(qlf, de.tags = rownames(qlf)[is.de != 0],main ="Differentially expressed genes")
+```
+
+
+```{r}
+par(mfrow = c(3,3))
+for (i in 1:9) {
+  barplot(cpm[tt$table$gene.id[i], ], col = as.numeric(factor(dge$samples$Strain)), 
+          las = 2, cex.names = 0.75, main = tt$table$symbol[i], ylab = "CPM",xlab = FALSE)
+}
+
+```
+```{r}
+# GO groups contained in the differentially regulated genes
+reg <- as.integer(is.de != 0) # 0 = unregulated, 1 = differentially regulated
+names(reg) <- rownames(is.de)
+table(reg)
+diff <- names(reg)
+d <- diff[reg != 0]
+universe <- diff[reg == 0]
+
+#biocLite("celegans.db")
+library(celegans.db)
+library(clusterProfiler)
+gx <- groupGO(d,
+        OrgDb = celegans.db,
+        keytype =  'ENSEMBL',
+        ont      = "CC",
+        level    = 3,
+        readable = TRUE)
+
+barplot(gx, drop=TRUE, order=TRUE, showCategory=25,main = "all")
+```
+
+
+```{r}
+# GO enrichment
+x <- enrichGO(d, 
+        celegans.db,
+        keyType = "ENSEMBL",
+        pvalueCutoff = 0.9,
+        pAdjustMethod = "BH",
+        universe = universe,
+        qvalueCutoff = 0.2,
+        minGSSize = 1,
+        maxGSSize = 500,
+        readable = FALSE,
+        pool = FALSE)
+
+# DAVID enrichment
+enrichDAVID(gene, idType = "ENTREZ_GENE_ID", universe, minGSSize = 10,
+      maxGSSize = 500, annotation = "GOTERM_BP_FAT", pvalueCutoff = 0.05,
+      pAdjustMethod = "BH", qvalueCutoff = 0.2, species = NA, david.user)
+```
+
+
+
+
+
+## Kegg pathway analysis
+Heat map of KEGG pathway analysis in wild-type worms fed ad libitum, animals on dietary restriction and dietary restriction with sfa-1 RNAi
+at day 15.
+
+```{r}
+# http://www.gettinggeneticsdone.com/2015/12/tutorial-rna-seq-differential.html
+# biocLite("KEGGREST")
+library(KEGGREST) #updated KEGG.db
+
+# biocLite("gage")
+library(gage)
+kg.cel=kegg.gsets("cel", id.type = "entrez")
+kg.cel=kegg.gsets("cel")
+kegg.gs=kg.cel$kg.sets[kg.cel$sigmet.idx]
+# head(kegg.gs)
+```
+
+The gage() function requires a named vector of fold changes, where the names of the values are the Entrez gene IDs.
+```{r}
+foldchanges = tt$table$logFC
+names(foldchanges) = tt$table$entrez
+head(foldchanges)
+```
+
+Now, let’s run the pathway analysis. See help on the gage function with ?gage. Specifically, you might want to try changing the value of same.dir. This value determins whether to test for changes in a gene set toward a single direction (all genes up or down regulated) or changes towards both directions simultaneously (any genes in the pathway dysregulated).
+For experimentally derived gene sets, GO term groups, etc, coregulation is commonly the case, hence same.dir = TRUE (default); In KEGG, BioCarta pathways, genes frequently are not coregulated, hence it could be informative to let same.dir = FALSE. Although same.dir = TRUE could also be interesting for pathways.
+Here, we’re using same.dir = TRUE, which will give us separate lists for pathways that are upregulated versus pathways that are downregulated. Let’s look at the first few results from each.
+
+```{r}
+# Get the results
+keggres = gage(foldchanges, gsets=kegg.gs, same.dir=TRUE)
+
+# Look at both up (greater), down (less), and statatistics.
+lapply(keggres, head) 
+```
+Now, let’s process the results to pull out the top 5 upregulated pathways, then further process that just to get the IDs. We’ll use these KEGG pathway IDs downstream for plotting.
+
+```{r}
+# Get the pathways
+keggrespathways = data.frame(id=rownames(keggres$greater), keggres$greater) %>% 
+  tbl_df() %>% 
+  filter(row_number()<=5) %>% 
+  .$id %>% 
+  as.character()
+keggrespathways
+
+# Get the IDs.
+keggresids = substr(keggrespathways, start=1, stop=8)
+#keggresids
+```
+
+
+```{r}
+#biocLite("pathview")
+library(pathview)
+
+# Define plotting function for applying later
+plot_pathway = function(pid) pathview(gene.data=foldchanges, pathway.id=pid, species="cel", new.signature=FALSE)
+
+# plot multiple pathways (plots saved to disk and returns a throwaway list object)
+tmp = sapply(keggresids, function(pid) pathview(gene.data=foldchanges, pathway.id=pid, species="cel"))
+
+dir()
+```
+
+![Most up regulated pathway (pval = xxx)](./cel03013.pathview.png)
+
+
+
+
+
+
+
+
+
+
+# Day 15 animals
+Publication: To define the effects of dietary restriction that are specifically mod- ulated by SFA-1, we first analysed differential gene expression changes between animals fed ad libitum and animals on dietary restriction at day 15, with and without sfa-1 RNAi (Supplementary Tables 4, 5). We then determined the KEGG pathways significantly altered by dietary restriction in day 15 animals in an SFA-1-dependent manner. RNAi of sfa-1 did not block all dietary restriction-related changes to gene expression, but instead specifically reversed upregulation of lipid/fatty acid metabolism genes induced by dietary restriction (Fig. 3a, boxed region, Extended Data Fig. 6e, f)
+
+Can I reproduce this?
